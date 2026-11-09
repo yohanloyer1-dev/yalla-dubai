@@ -299,6 +299,11 @@ p { margin: 0; }
 .opt.wrong { animation: shake .4s ease-out; }
 .opt.wrong .k, .stmt.lie .k { background: var(--bad); color: #fff; border-color: var(--bad); }
 .opt.dim { opacity: .5; box-shadow: none; }
+.opt.sel, .stmt.sel { border-color: var(--ch); background: color-mix(in srgb, var(--ch) 12%, var(--bg-2)); box-shadow: 0 5px 0 var(--ch); }
+.opt.sel .k, .stmt.sel .k { background: var(--ch); color: #fff; border-color: var(--ch); }
+.lockrow { display: grid; gap: 8px; justify-items: start; animation: pop .3s ease-out both; }
+.lockrow .hint { color: var(--fg-2); font-size: .9rem; font-weight: 600; }
+.lockrow .btn.lg { padding: 16px 28px; }
 @keyframes shake { 20% { transform: translateX(-6px); } 45% { transform: translateX(5px); } 70% { transform: translateX(-3px); } }
 .why { display: grid; gap: 6px; background: var(--bg-2); border: 2px solid var(--line); border-radius: 18px; padding: 14px 16px; animation: pop .35s ease-out both; }
 .why .verdict { font-family: var(--font-display); font-size: 1.4rem; font-weight: 800; }
@@ -418,13 +423,14 @@ canvas#fx { position: fixed; inset: 0; pointer-events: none; z-index: 20; }
     streak: [0, 0], badges: [[], []],
     missions: {},
     bluff: { idx: 0, picks: [] },
+    sel: null,                  // pending choice before lock-in: { id: "q:<chapter>:<k>" | "b:<round>", i: index }
     muted: false, started: false
   };
 
   /* ---------- persistence ---------- */
   function load() { try { var raw = localStorage.getItem(KEY); if (raw) { var s = JSON.parse(raw); if (s && s.names) state = Object.assign(state, s); } } catch (e) {} }
   function save() { try { localStorage.setItem(KEY, JSON.stringify(state)); } catch (e) {} }
-  function fresh() { return { screen: "welcome", names: ["", ""], tokens: [0, 1], ch: 0, step: 0, answers: {}, streak: [0, 0], badges: [[], []], missions: {}, bluff: { idx: 0, picks: [] }, muted: false, started: false }; }
+  function fresh() { return { screen: "welcome", names: ["", ""], tokens: [0, 1], ch: 0, step: 0, answers: {}, streak: [0, 0], badges: [[], []], missions: {}, bluff: { idx: 0, picks: [] }, sel: null, muted: false, started: false }; }
   function reset() { var m = state.muted; state = fresh(); state.muted = m; save(); render(); }
 
   /* ---------- helpers ---------- */
@@ -491,7 +497,7 @@ canvas#fx { position: fixed; inset: 0; pointer-events: none; z-index: 20; }
     topbar.hidden = state.screen === "welcome";
     bottombar.hidden = !(state.screen === "chapter" || (state.screen === "bluff" && state.bluff.idx < D.bluff.length));
     pearlsEl.hidden = !(state.screen === "chapter" || (state.screen === "bluff" && state.bluff.idx < D.bluff.length));
-    stage.style.setProperty("--ch", state.screen === "chapter" ? chColor(state.ch) : (state.screen === "bluff" ? "var(--p1)" : "var(--gold)"));
+    stage.style.setProperty("--ch", state.screen === "chapter" ? chColor(state.ch) : "var(--gold)");
     document.documentElement.style.setProperty("--ch", stage.style.getPropertyValue("--ch"));
     if (state.screen === "welcome") html = renderWelcome();
     else if (state.screen === "map") html = renderMap();
@@ -510,7 +516,7 @@ canvas#fx { position: fixed; inset: 0; pointer-events: none; z-index: 20; }
       '<section class="hero">' + img("hero_skyline", "Dubai skyline at night") +
         '<div class="sticker">The family game</div>' +
         '<div class="hero-text gutter"><span class="ar">يلا دبي</span><h1>Yalla Dubai</h1>' +
-        '<div class="hero-stats"><span>2 players</span><span>7 chapters</span><span>1 week in Dubai</span><span>🔊 sound on</span></div></div>' +
+        '<div class="hero-stats"><span>2 players</span><span>7 chapters</span><span>1 week in Dubai</span><span>🔊 sounds</span></div></div>' +
       '</section>' +
       '<section class="setup gutter">' +
         '<p class="intro">Pick a token each, read the photo cards together, then take turns on the questions. Every right answer wins a pearl, the thing this city was built on. Argue about the answers; that is the point.</p>' +
@@ -579,14 +585,18 @@ canvas#fx { position: fixed; inset: 0; pointer-events: none; z-index: 20; }
     }
     if (sk.kind === "quiz") {
       var q = ch.quiz[sk.i], p = whoAnswers(c, sk.i), ans = chapterAnswers(c), chosen = ans[sk.i], answered = isSet(chosen);
+      var pend = pendingFor("q:" + ch.id + ":" + sk.i);
       var h = '<section class="quiz gutter">' + banner(p, answered ? 'Answered' : 'Your turn', 'Question ' + (sk.i + 1) + ' of ' + ch.quiz.length) +
         '<h2 class="q">' + esc(q.q) + '</h2><div class="options">';
       q.options.forEach(function (o, i) {
         var cls = "opt";
         if (answered) { if (i === q.answer) cls += " correct"; else if (i === chosen) cls += " wrong"; else cls += " dim"; }
-        h += '<button class="' + cls + '" data-opt="' + i + '" type="button"' + (answered ? ' disabled' : '') + '><span class="k">' + "ABCD"[i] + '</span><span>' + esc(o) + '</span></button>';
+        else if (pend === i) cls += " sel";
+        h += '<button class="' + cls + '" data-opt="' + i + '" type="button"' + (answered ? ' disabled' : '') + ' aria-pressed="' + (pend === i) + '"><span class="k">' + "ABCD"[i] + '</span><span>' + esc(o) + '</span></button>';
       });
       h += '</div>';
+      if (!answered) h += pend === null ? '<p class="progressline">Tap an answer to select it, then lock it in.</p>'
+        : '<div class="lockrow"><button class="btn ch lg" id="lockbtn" type="button">Lock in ' + "ABCD"[pend] + ' ✓</button><span class="hint">Changed your mind? Tap another answer.</span></div>';
       if (answered) {
         var ok = chosen === q.answer;
         h += '<div class="why"><div class="verdict ' + (ok ? 'ok' : 'bad') + '">' + (ok ? '✓ Correct! A pearl for ' + esc(name(p)) + '.' : '✗ Not this time. The answer was ' + "ABCD"[q.answer] + '.') + '</div><p>' + esc(q.why) + '</p></div>';
@@ -619,16 +629,18 @@ canvas#fx { position: fixed; inset: 0; pointer-events: none; z-index: 20; }
         '<div class="tally">' + rankCard(0, b0, each, rankFor(b0 / each), b0 > b1) + rankCard(1, b1, each, rankFor(b1 / each), b1 > b0) + '</div>' +
         '<div class="actions"><button class="btn lg" id="bluffagain" type="button">Play again</button><button class="btn ghost" id="tomap" type="button">Journey map</button><button class="btn ghost" id="towelcome" type="button">Start screen</button></div></section>';
     }
-    var rd = D.bluff[r], p = bluffWho(r), pick = state.bluff.picks[r], answered = isSet(pick);
+    var rd = D.bluff[r], p = bluffWho(r), pick = state.bluff.picks[r], answered = isSet(pick), pend = pendingFor("b:" + r);
     var h = '<section class="bluff gutter">' + banner(p, answered ? 'Revealed' : 'Your turn', 'Round ' + (r + 1) + ' of ' + n) +
       '<div class="round"><h3>' + esc(rd.title) + '</h3><span class="label">' + (answered ? 'Here is the truth' : 'Two are true. Which one is the lie?') + '</span></div><div class="options">';
     rd.statements.forEach(function (st, i) {
-      var cls = "stmt" + (answered ? (st.lie ? " lie" : " truth") : "") + (answered && i === pick ? " picked" : "");
-      h += '<button class="' + cls + '" data-stmt="' + i + '" type="button"' + (answered ? ' disabled' : '') + '><span class="k">' + (i + 1) + '</span><span class="body">' +
+      var cls = "stmt" + (answered ? (st.lie ? " lie" : " truth") : (pend === i ? " sel" : "")) + (answered && i === pick ? " picked" : "");
+      h += '<button class="' + cls + '" data-stmt="' + i + '" type="button"' + (answered ? ' disabled' : '') + ' aria-pressed="' + (pend === i) + '"><span class="k">' + (i + 1) + '</span><span class="body">' +
         (answered ? '<span class="tag">' + (st.lie ? '✗ The lie' : '✓ True') + (i === pick ? ' · your pick' : '') + '</span>' : '') +
         '<span>' + esc(st.t) + '</span>' + (answered ? '<span class="why">' + esc(st.why) + '</span>' : '') + '</span></button>';
     });
     h += '</div>';
+    if (!answered) h += pend === null ? '<p class="progressline">Tap the one you think is the lie, then lock it in.</p>'
+      : '<div class="lockrow"><button class="btn ch lg" id="lockbtn" type="button">Lock in: number ' + (pend + 1) + ' is the lie ✓</button><span class="hint">Changed your mind? Tap another statement.</span></div>';
     if (answered) {
       var ok = rd.statements[pick].lie;
       h += '<div class="why"><div class="verdict ' + (ok ? 'ok' : 'bad') + '">' + (ok ? '✓ Spotted it! A pearl for ' + esc(name(p)) + '.' : '✗ That one was true. No pearl this round.') + '</div>' +
@@ -678,8 +690,9 @@ canvas#fx { position: fixed; inset: 0; pointer-events: none; z-index: 20; }
       for (var b = 0; b < nb; b++) { var e = document.createElement("span"); e.className = "pearl quiz" + (b < cur ? " done" : "") + (b === cur ? " now" : ""); pearlsEl.appendChild(e); }
       stepLabel.textContent = cur < nb ? "Round " + (cur + 1) + " of " + nb : "Final";
       backBtn.disabled = cur === 0;
-      nextBtn.hidden = cur >= nb; nextBtn.disabled = !isSet(state.bluff.picks[cur]);
-      nextBtn.textContent = cur === nb - 1 ? "See the result →" : "Next round →";
+      var bp = pendingFor("b:" + cur) !== null, bdone = isSet(state.bluff.picks[cur]);
+      nextBtn.hidden = cur >= nb; nextBtn.disabled = !(bdone || bp);
+      nextBtn.textContent = !bdone && bp ? "Lock in ✓" : cur === nb - 1 ? "See the result →" : "Next round →";
       return;
     }
     if (state.screen !== "chapter") return;
@@ -688,14 +701,28 @@ canvas#fx { position: fixed; inset: 0; pointer-events: none; z-index: 20; }
     var sk = stepKind(c, state.step);
     stepLabel.textContent = sk.kind === "intro" ? "Chapter " + (c + 1) : sk.kind === "card" ? "Card " + (sk.i + 1) + " of " + ch.cards.length : sk.kind === "quiz" ? "Question " + (sk.i + 1) + " of " + ch.quiz.length : "Complete";
     backBtn.disabled = state.step === 0;
-    var canNext = sk.kind === "intro" || sk.kind === "card" || (sk.kind === "quiz" && isSet(chapterAnswers(c)[sk.i]));
+    var qAnswered = sk.kind === "quiz" && isSet(chapterAnswers(c)[sk.i]);
+    var qPending = sk.kind === "quiz" && !qAnswered && pendingFor("q:" + ch.id + ":" + sk.i) !== null;
+    var canNext = sk.kind === "intro" || sk.kind === "card" || qAnswered || qPending;
     nextBtn.hidden = sk.kind === "summary"; nextBtn.disabled = !canNext;
-    nextBtn.textContent = sk.kind === "intro" ? "Begin →" : (sk.kind === "card" && sk.i === ch.cards.length - 1) ? "To the questions →" : (sk.kind === "quiz" && sk.i === ch.quiz.length - 1) ? "Finish chapter →" : "Next →";
+    nextBtn.textContent = qPending ? "Lock in ✓" : sk.kind === "intro" ? "Begin →" : (sk.kind === "card" && sk.i === ch.cards.length - 1) ? "To the questions →" : (sk.kind === "quiz" && sk.i === ch.quiz.length - 1) ? "Finish chapter →" : "Next →";
   }
 
   /* ---------- actions ---------- */
   function go(screen, extra) { state.screen = screen; if (extra) Object.assign(state, extra); render(); }
+  function pendingFor(id) { return state.sel && state.sel.id === id ? state.sel.i : null; }
+  function select(id, i, max) {
+    if (i < 0 || i >= max) return;
+    state.sel = { id: id, i: i }; save(); sfx("tick"); render(true);
+  }
+  function lockIn() {
+    if (!state.sel) return false;
+    if (state.screen === "bluff") { var r = state.bluff.idx; if (state.sel.id === "b:" + r && !isSet(state.bluff.picks[r])) { var bi = state.sel.i; state.sel = null; commitBluff(bi); return true; } }
+    if (state.screen === "chapter") { var sk = stepKind(state.ch, state.step); if (sk.kind === "quiz" && state.sel.id === "q:" + D.chapters[state.ch].id + ":" + sk.i && !isSet(chapterAnswers(state.ch)[sk.i])) { var qi = state.sel.i; state.sel = null; commitAnswer(qi); return true; } }
+    return false;
+  }
   function next() {
+    if (lockIn()) return;
     if (state.screen === "bluff") { var r = state.bluff.idx; if (r >= D.bluff.length || !isSet(state.bluff.picks[r])) return; sfx("tap"); state.bluff.idx++; render(); return; }
     if (state.screen !== "chapter") return;
     var sk = stepKind(state.ch, state.step);
@@ -705,6 +732,7 @@ canvas#fx { position: fixed; inset: 0; pointer-events: none; z-index: 20; }
     if (stepKind(state.ch, state.step).kind === "summary") { chapterEnd(state.ch); }
     render();
   }
+  function revealScroll() { setTimeout(function () { var w = stage.querySelector(".quiz > .why, .bluff > .why"); if (w && w.scrollIntoView) w.scrollIntoView({ behavior: reduce ? "auto" : "smooth", block: "nearest" }); }, 80); }
   function back() {
     if (state.screen === "bluff" && state.bluff.idx > 0) { sfx("tap"); state.bluff.idx--; render(); return; }
     if (state.screen === "chapter" && state.step > 0) { sfx("tap"); state.step--; render(); }
@@ -718,7 +746,13 @@ canvas#fx { position: fixed; inset: 0; pointer-events: none; z-index: 20; }
     setTimeout(function () { confetti(80, 2500); }, 150);
   }
   function answer(i) {
-    if (state.screen === "bluff") { if (i < 3) bluffPick(i); return; }
+    // first tap selects; lock-in (button, Enter, or the bottom bar) commits
+    if (state.screen === "bluff") { var r = state.bluff.idx; if (r < D.bluff.length && !isSet(state.bluff.picks[r])) select("b:" + r, i, 3); return; }
+    if (state.screen !== "chapter") return;
+    var sk0 = stepKind(state.ch, state.step);
+    if (sk0.kind === "quiz" && !isSet(chapterAnswers(state.ch)[sk0.i])) select("q:" + D.chapters[state.ch].id + ":" + sk0.i, i, 4);
+  }
+  function commitAnswer(i) {
     var c = state.ch, sk = stepKind(c, state.step);
     if (sk.kind !== "quiz") return;
     var ch = D.chapters[c], ans = chapterAnswers(c).slice();
@@ -731,14 +765,16 @@ canvas#fx { position: fixed; inset: 0; pointer-events: none; z-index: 20; }
     save();
     render(true);
     if (correct) { sfx("ok"); flyPearl(from, p); burstAt(from, chColor(c)); } else { sfx("bad"); }
+    revealScroll();
   }
-  function bluffPick(i) {
+  function commitBluff(i) {
     var r = state.bluff.idx; if (state.screen !== "bluff" || r >= D.bluff.length || isSet(state.bluff.picks[r])) return;
     state.bluff.picks[r] = i; save();
     var p = bluffWho(r), ok = D.bluff[r].statements[i].lie, from = stage.querySelector('[data-stmt="' + i + '"]');
     render(true);
     if (ok) { sfx("ok"); flyPearl(from, p); burstAt(from, "var(--p" + (p + 1) + ")"); if (r === D.bluff.length - 1 && bluffPearls(p) === D.bluff.length / 2) addBadge(p, "detector"); } else sfx("bad");
     if (r === D.bluff.length - 1) setTimeout(function () { sfx("win"); confetti(120, 3200); }, 700);
+    revealScroll();
   }
 
   function bind() {
@@ -759,7 +795,8 @@ canvas#fx { position: fixed; inset: 0; pointer-events: none; z-index: 20; }
     stage.querySelectorAll("[data-finale]").forEach(function (b) { b.onclick = function () { sfx("tap"); go("finale"); }; });
     stage.querySelectorAll("[data-bluff]").forEach(function (b) { b.onclick = function () { sfx("tap"); if (bluffDone()) state.bluff = { idx: 0, picks: [] }; go("bluff"); }; });
     stage.querySelectorAll("[data-opt]").forEach(function (b) { b.onclick = function () { answer(+b.getAttribute("data-opt")); }; });
-    stage.querySelectorAll("[data-stmt]").forEach(function (b) { b.onclick = function () { bluffPick(+b.getAttribute("data-stmt")); }; });
+    stage.querySelectorAll("[data-stmt]").forEach(function (b) { b.onclick = function () { answer(+b.getAttribute("data-stmt")); }; });
+    if ((el = document.getElementById("lockbtn"))) el.onclick = function () { lockIn(); };
     stage.querySelectorAll("[data-mission]").forEach(function (b) { b.onclick = function () {
       var id = b.getAttribute("data-mission"); state.missions[id] = !state.missions[id]; save();
       if (state.missions[id]) { sfx("pearl"); burstAt(b, "var(--ok)"); var n = D.missions.filter(function (m) { return state.missions[m.id]; }).length; if (n >= 10) { addBadge(0, "missions"); addBadge(1, "missions"); } } else sfx("tap");
@@ -781,6 +818,7 @@ canvas#fx { position: fixed; inset: 0; pointer-events: none; z-index: 20; }
   document.addEventListener("keydown", function (e) {
     if (e.target && e.target.tagName === "INPUT") return;
     if (e.key === "ArrowRight") next(); else if (e.key === "ArrowLeft") back(); else if (/^[1-4]$/.test(e.key)) answer(+e.key - 1);
+    else if (e.key === "Enter" && !(e.target && e.target.tagName === "BUTTON")) { if (lockIn()) e.preventDefault(); }
   });
   var tx = null, ty = null;
   stage.addEventListener("touchstart", function (e) { var t = e.changedTouches[0]; tx = t.clientX; ty = t.clientY; }, { passive: true });
@@ -839,6 +877,7 @@ canvas#fx { position: fixed; inset: 0; pointer-events: none; z-index: 20; }
     if (!Array.isArray(state.tokens)) state.tokens = [0, 1];
     if (!Array.isArray(state.badges)) state.badges = [[], []];
     if (!Array.isArray(state.streak)) state.streak = [0, 0];
+    if (state.sel && (typeof state.sel.id !== "string" || typeof state.sel.i !== "number")) state.sel = null;
     if (state.screen === "chapter" && (state.ch >= D.chapters.length || state.step >= steps(state.ch))) { state.ch = 0; state.step = 0; state.screen = "map"; }
     if (state.screen === "bluff" && state.bluff.idx > D.bluff.length) state.bluff.idx = D.bluff.length;
     render();
